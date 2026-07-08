@@ -85,6 +85,31 @@ const API = {
   async getHistory() {
     return this.request("/account/history");
   },
+
+  async getPredictionMarkets() {
+    return this.request("/predictions");
+  },
+
+  async createPrediction(payload) {
+    return this.request("/predictions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async tradePrediction(predictionId, payload) {
+    return this.request(`/predictions/${predictionId}/trade`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async settlePrediction(predictionId, winningOutcome) {
+    return this.request(`/predictions/${predictionId}/settle`, {
+      method: "POST",
+      body: JSON.stringify({ winningOutcome }),
+    });
+  },
 };
 
 // WebSocket Service
@@ -454,7 +479,165 @@ function PriceChart({ marketId }) {
   );
 }
 
-// Main App Component
+function PredictionMarketList({ markets, onSelect, onCreate }) {
+  const [question, setQuestion] = useState("");
+  const [description, setDescription] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    setError("");
+    setPending(true);
+
+    try {
+      await API.createPrediction({ question, description, expiryDate });
+      setQuestion("");
+      setDescription("");
+      setExpiryDate("");
+      await onCreate();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="prediction-section">
+      <div className="prediction-form-card">
+        <h3>Create Prediction Market</h3>
+        <form onSubmit={handleCreate}>
+          <div className="form-group">
+            <label>Question</label>
+            <input value={question} onChange={(e) => setQuestion(e.target.value)} required placeholder="Will ETH reach $5000 by end of 2026?" />
+          </div>
+          <div className="form-group">
+            <label>Description</label>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional context" />
+          </div>
+          <div className="form-group">
+            <label>ExpiryDate</label>
+            <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} required />
+          </div>
+          {error && <div className="error-message">{error}</div>}
+          <button type="submit" className="btn-primary" disabled={pending}>{pending ? "Creating..." : "Create Market"}</button>
+        </form>
+      </div>
+
+      <div className="markets-grid">
+        {markets.map((market) => (
+          <div key={market.id} className="market-card" onClick={() => onSelect(market)}>
+            <div className="market-header">
+              <h3>{market.question}</h3>
+              <span className="prediction-badge">Prediction</span>
+            </div>
+            <div className="market-price">Yes {(market.currentPrices?.Yes * 100).toFixed(1)}%</div>
+            <div className="market-change positive">No {(market.currentPrices?.No * 100).toFixed(1)}%</div>
+            <div className="market-volume">Status: {market.status}</div>
+            <div className="market-volume">Liquidity: ${market.totalLiquidity.toFixed(2)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PredictionTradingPanel({ market, onTrade }) {
+  const [outcome, setOutcome] = useState("Yes");
+  const [shares, setShares] = useState(10);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const handleTrade = async (e) => {
+    e.preventDefault();
+    setError("");
+    setPending(true);
+
+    try {
+      await API.tradePrediction(market.id, { outcome, shares: Number(shares) });
+      setShares(10);
+      await onTrade();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="trading-form">
+      <h3>Trade: {market.question}</h3>
+      <div className="order-type-selector">
+        <button className={outcome === "Yes" ? "active" : ""} onClick={() => setOutcome("Yes")}>Buy Yes</button>
+        <button className={outcome === "No" ? "active" : ""} onClick={() => setOutcome("No")}>Buy No</button>
+      </div>
+      {error && <div className="error-message">{error}</div>}
+      <form onSubmit={handleTrade}>
+        <div className="form-group">
+          <label>Shares</label>
+          <input type="number" min="1" value={shares} onChange={(e) => setShares(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label>Estimated Cost</label>
+          <input type="text" value={`$${(Number(shares) * market.currentPrices[outcome]).toFixed(2)}`} disabled />
+        </div>
+        <button type="submit" className="btn-primary" disabled={pending}>{pending ? "Trading..." : `Buy ${outcome}`}</button>
+      </form>
+    </div>
+  );
+}
+
+function PredictionDetail({ market, onTrade, onSettle }) {
+  const [winningOutcome, setWinningOutcome] = useState("Yes");
+  const [settleError, setSettleError] = useState("");
+
+  const handleSettle = async () => {
+    setSettleError("");
+    try {
+      await API.settlePrediction(market.id, winningOutcome);
+      await onSettle();
+    } catch (err) {
+      setSettleError(err.message);
+    }
+  };
+
+  return (
+    <div className="market-detail">
+      <div className="market-detail-header">
+        <h2>{market.question}</h2>
+      </div>
+      <p className="prediction-description">{market.description}</p>
+      <div className="probability-meter">
+        <div className="yes-probability" style={{ width: `${market.currentPrices.Yes * 100}%` }}>
+          Yes: {(market.currentPrices.Yes * 100).toFixed(1)}%
+        </div>
+        <div className="no-probability" style={{ width: `${market.currentPrices.No * 100}%` }}>
+          No: {(market.currentPrices.No * 100).toFixed(1)}%
+        </div>
+      </div>
+      <div className="market-stats">
+        <div>Liquidity: ${market.totalLiquidity.toFixed(2)}</div>
+        <div>Volume 24h: ${market.volume24h.toFixed(2)}</div>
+        <div>Status: {market.status}</div>
+      </div>
+      <div className="prediction-actions">
+        <PredictionTradingPanel market={market} onTrade={onTrade} />
+        <div className="settle-card">
+          <h3>Settle Market</h3>
+          <div className="order-type-selector">
+            <button className={winningOutcome === "Yes" ? "active" : ""} onClick={() => setWinningOutcome("Yes")}>Yes</button>
+            <button className={winningOutcome === "No" ? "active" : ""} onClick={() => setWinningOutcome("No")}>No</button>
+          </div>
+          {settleError && <div className="error-message">{settleError}</div>}
+          <button className="btn-primary" onClick={handleSettle}>Settle Market</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [markets, setMarkets] = useState([]);
@@ -487,10 +670,36 @@ function App() {
     }
   }, [user]);
 
+  useEffect(() => {
+    const handler = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'prediction_created' || data.type === 'prediction_traded' || data.type === 'prediction_settled') {
+        fetchMarkets();
+      }
+    };
+
+    if (wsService.ws) {
+      wsService.ws.addEventListener('message', handler);
+    }
+
+    return () => {
+      if (wsService.ws) {
+        wsService.ws.removeEventListener('message', handler);
+      }
+    };
+  }, [user]);
+
   const fetchMarkets = async () => {
     try {
-      const data = await API.getMarkets();
-      setMarkets(data);
+      const [marketData, predictionData] = await Promise.all([
+        API.getMarkets(),
+        API.getPredictionMarkets(),
+      ]);
+      const combined = [...marketData, ...predictionData];
+      setMarkets(combined);
+      if (!selectedMarket) {
+        setSelectedMarket(predictionData[0] || null);
+      }
     } catch (err) {
       console.error("Failed to fetch markets:", err);
     }
@@ -560,50 +769,21 @@ function App() {
       <main className="main-content">
         {activeTab === "markets" && (
           <div className="markets-view">
-            <div className="markets-grid">
-              {markets.map((market) => (
-                <MarketCard
-                  key={market.id}
-                  market={market}
-                  onSelect={() => {
-                    setSelectedMarket(market);
-                    wsService.subscribe(market.id);
-                  }}
-                />
-              ))}
-            </div>
+            <PredictionMarketList
+              markets={markets.filter((market) => market.question)}
+              onSelect={(market) => {
+                setSelectedMarket(market);
+                wsService.subscribe(market.id);
+              }}
+              onCreate={fetchMarkets}
+            />
 
-            {selectedMarket && (
-              <div className="market-detail">
-                <div className="market-detail-header">
-                  <h2>{selectedMarket.name}</h2>
-                  <button
-                    className="close-btn"
-                    onClick={() => {
-                      wsService.unsubscribe(selectedMarket.id);
-                      setSelectedMarket(null);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <div className="market-detail-content">
-                  <div className="left-panel">
-                    <PriceChart marketId={selectedMarket.id} />
-                    <OrderBook marketId={selectedMarket.id} />
-                  </div>
-                  <div className="right-panel">
-                    <TradingForm
-                      market={selectedMarket}
-                      onOrderPlaced={() => {
-                        fetchOrders();
-                        fetchBalance();
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
+            {selectedMarket && selectedMarket.question && (
+              <PredictionDetail
+                market={selectedMarket}
+                onTrade={fetchMarkets}
+                onSettle={fetchMarkets}
+              />
             )}
           </div>
         )}

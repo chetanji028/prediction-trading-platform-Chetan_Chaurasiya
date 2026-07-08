@@ -17,8 +17,8 @@
     "label": "lint on open",
     "type": "shell",
     "command": "npm run lint",
-    "runOn": "folderOpen",
-    "allowAutomaticTasks" : "on"
+    "runOn": "folderOpen"
   },
-  "tasks.allowAutomaticTasks": "on"
+  "tasks.allowAutomaticTasks": "on",
+  "task.allowAutomaticTasks": true
 }

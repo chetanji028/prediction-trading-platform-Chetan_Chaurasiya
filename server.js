@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const cookieParser = require('cookie-parser');
-
+const { createPrediction, tradePrediction, settlePrediction } = require('./predictionService');
 
 const app = express();
 const server = http.createServer(app);
@@ -42,6 +42,8 @@ const GO_MARKET_URL = 'http://localhost:8081';
 
 // In-memory database (for testing)
 const users = [];
+const predictionMarkets = [];
+const predictionTrades = [];
 
 // Create test user
 const testUser = {
@@ -249,6 +251,88 @@ app.get('/api/account/balance', authenticateToken, (req, res) => {
   res.json({ balance: user.balance });
 });
 
+app.post('/api/predictions', authenticateToken, (req, res) => {
+  try {
+    const market = createPrediction({
+      question: req.body.question,
+      description: req.body.description || '',
+      createdBy: req.user.id,
+      expiryDate: req.body.expiryDate,
+    });
+
+    predictionMarkets.push(market);
+    broadcastPredictionUpdate({ type: 'prediction_created', payload: market });
+    res.status(201).json(market);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/predictions', (req, res) => {
+  res.json(predictionMarkets);
+});
+
+app.get('/api/predictions/:id', (req, res) => {
+  const market = predictionMarkets.find((item) => item.id === req.params.id);
+  if (!market) {
+    return res.status(404).json({ error: 'Prediction market not found' });
+  }
+  res.json(market);
+});
+
+app.post('/api/predictions/:id/trade', authenticateToken, (req, res) => {
+  try {
+    const market = predictionMarkets.find((item) => item.id === req.params.id);
+    if (!market) {
+      return res.status(404).json({ error: 'Prediction market not found' });
+    }
+
+    const trade = tradePrediction(market, req.user.id, req.body.outcome, req.body.shares);
+    predictionTrades.push(trade.trades[trade.trades.length - 1]);
+    broadcastPredictionUpdate({ type: 'prediction_traded', payload: market });
+    res.json(market);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/predictions/:id/history', (req, res) => {
+  const market = predictionMarkets.find((item) => item.id === req.params.id);
+  if (!market) {
+    return res.status(404).json({ error: 'Prediction market not found' });
+  }
+  res.json(market.trades);
+});
+
+app.post('/api/predictions/:id/settle', authenticateToken, (req, res) => {
+  const user = users.find((item) => item.id === req.user.id);
+  if (!user || user.email !== 'test@example.com') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  try {
+    const market = predictionMarkets.find((item) => item.id === req.params.id);
+    if (!market) {
+      return res.status(404).json({ error: 'Prediction market not found' });
+    }
+
+    const settledMarket = settlePrediction(market, req.body.winningOutcome);
+    broadcastPredictionUpdate({ type: 'prediction_settled', payload: settledMarket });
+    res.json(settledMarket);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+function broadcastPredictionUpdate(payload) {
+  const message = JSON.stringify(payload);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -275,8 +359,9 @@ wss.on('connection', (ws) => {
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      // Handle subscription logic here
-      console.log('Received:', data);
+      if (data.type === 'subscribe' && data.marketId) {
+        ws.predictionMarketId = data.marketId;
+      }
     } catch (error) {
       console.error('WebSocket message error:', error);
     }

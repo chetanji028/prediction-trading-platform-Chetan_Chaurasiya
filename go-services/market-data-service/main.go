@@ -6,11 +6,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	
+
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
-	"github.com/google/uuid"
-	
+
 	"trading-platform/shared"
 )
 
@@ -42,11 +41,8 @@ func (s *MarketDataService) startPriceSimulation() {
 			s.mu.Lock()
 			for marketID, data := range s.marketData {
 				// Simulate price movement
-				change := (0.5 - (time.Now().UnixNano() % 1000)/1000.0) * 0.001 * data.Price
-				data.Price += change
-				data.Timestamp = time.Now()
-				
-				// Update 24h metrics
+			change := (0.5 - float64(time.Now().UnixNano()%1000)/1000.0) * 0.001 * data.Price
+			data.Price += change
 				if data.Price > data.High24h {
 					data.High24h = data.Price
 				}
@@ -137,9 +133,6 @@ func (s *MarketDataService) handleGetMarket(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *MarketDataService) handleGetCandles(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	marketID := vars["id"]
-	
 	// Generate sample candle data
 	candles := make([]map[string]interface{}, 30)
 	now := time.Now()
